@@ -6,6 +6,7 @@ Outputs **JSON** and/or **CSV** with pending update counts, last install/detect 
 ---
 
 ## Features
+
 - Local or remote collection (PowerShell Remoting/WinRM)
 - Uses built-in **Windows Update COM API** (no extra deps)
 - Optional **PSWindowsUpdate** path (`-UsePSWindowsUpdate`)
