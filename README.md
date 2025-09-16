@@ -88,9 +88,9 @@ Example JSON: samples/example-output.json
 
 Daily snapshot at 08:00 writing date-stamped files:
 
-$action  = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$PSScriptRoot\Get-UpdateCompliance.ps1`" -Json `"$PSScriptRoot\reports\$(Get-Date -Format yyyy-MM-dd).json`" -Csv `"$PSScriptRoot\reports\$(Get-Date -Format yyyy-MM-dd).csv`""
-$trigger = New-ScheduledTaskTrigger -Daily -At 8:00AM
-Register-ScheduledTask -TaskName "DAT Update Compliance" -Action $action -Trigger $trigger -Description "Daily Windows Update compliance snapshot"
+$action  = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$PSScriptRoot\Get-UpdateCompliance.ps1`" -Json `"$PSScriptRoot\reports\$(Get-Date -Format yyyy-MM-dd).json`" -Csv `"$PSScriptRoot\reports\$(Get-Date -Format yyyy-MM-dd).csv`""  
+$trigger = New-ScheduledTaskTrigger -Daily -At 8:00AM  
+Register-ScheduledTask -TaskName "DAT Update Compliance" -Action $action -Trigger $trigger -Description "Daily Windows Update compliance snapshot"  
 
 ---
 
