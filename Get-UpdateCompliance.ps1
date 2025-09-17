@@ -246,30 +246,33 @@ function Invoke-RemoteCompliance {
 
 # -------- main --------
 
-$all = @()
-if ($ComputerName) {
-  if (-not $Credential) {
-    Write-Error "Please supply -Credential when using -ComputerName."
-    exit 1
+$__isDotSourced = $MyInvocation.InvocationName -eq '.'
+if (-not $__isDotSourced) {
+  $all = @()
+  if ($ComputerName) {
+    if (-not $Credential) {
+      Write-Error "Please supply -Credential when using -ComputerName."
+      exit 1
+    }
+    $all = Invoke-RemoteCompliance -Targets $ComputerName -Cred $Credential
+  } else {
+    $all = @(Get-WUComplianceLocal)
   }
-  $all = Invoke-RemoteCompliance -Targets $ComputerName -Cred $Credential
-} else {
-  $all = @(Get-WUComplianceLocal)
-}
 
-# Console preview
-$all | Select-Object ComputerName,Compliance,Reasons,PendingCount,PendingSecurity,LastInstallSuccess,DaysSinceInstall,Build |
-  Sort-Object ComputerName |
-  Format-Table -AutoSize
+  # Console preview
+  $all | Select-Object ComputerName,Compliance,Reasons,PendingCount,PendingSecurity,LastInstallSuccess,DaysSinceInstall,Build |
+    Sort-Object ComputerName |
+    Format-Table -AutoSize
 
-# Outputs
-if ($Json) {
-  $all | ConvertTo-Json -Depth 6 | Out-File -Encoding utf8 $Json
-  Write-Host "[OK] Wrote JSON -> $Json"
-}
-if ($Csv) {
-  $all |
-    Select-Object ComputerName,Compliance,Reasons,PendingCount,PendingSecurity,LastDetectSuccess,LastInstallSuccess,DaysSinceInstall,ProductName,Edition,DisplayVersion,Build,CollectedAt |
-    Export-Csv -NoTypeInformation -Encoding UTF8 $Csv
-  Write-Host "[OK] Wrote CSV  -> $Csv"
+  # Outputs
+  if ($Json) {
+    $all | ConvertTo-Json -Depth 6 | Out-File -Encoding utf8 $Json
+    Write-Host "[OK] Wrote JSON -> $Json"
+  }
+  if ($Csv) {
+    $all |
+      Select-Object ComputerName,Compliance,Reasons,PendingCount,PendingSecurity,LastDetectSuccess,LastInstallSuccess,DaysSinceInstall,ProductName,Edition,DisplayVersion,Build,CollectedAt |
+      Export-Csv -NoTypeInformation -Encoding UTF8 $Csv
+    Write-Host "[OK] Wrote CSV  -> $Csv"
+  }
 }
