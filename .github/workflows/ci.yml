@@ -1,0 +1,32 @@
+name: ci
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install modules
+        shell: pwsh
+        run: |
+          Set-PSRepository PSGallery -InstallationPolicy Trusted
+          Install-Module Pester -Scope CurrentUser -Force
+          Install-Module PSScriptAnalyzer -Scope CurrentUser -Force
+
+      - name: Lint with PSScriptAnalyzer
+        shell: pwsh
+        run: |
+          $settings = Join-Path $PWD "PSScriptAnalyzerSettings.psd1"
+          $results  = Invoke-ScriptAnalyzer -Path . -Settings $settings -Recurse
+          if ($results) {
+            $results | Format-Table
+            throw "PSScriptAnalyzer found $($results.Count) issue(s)."
+          }
+
+      - name: Run Pester
+        shell: pwsh
+        run: Invoke-Pester -Output Detailed
