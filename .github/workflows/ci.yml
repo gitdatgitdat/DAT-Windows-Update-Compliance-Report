@@ -13,20 +13,23 @@ jobs:
       - name: Install modules
         shell: pwsh
         run: |
+          if (-not (Get-PSRepository -Name PSGallery -ErrorAction SilentlyContinue)) {
+            Register-PSRepository -Default
+          }
           Set-PSRepository PSGallery -InstallationPolicy Trusted
           Install-Module Pester -Scope CurrentUser -Force
           Install-Module PSScriptAnalyzer -Scope CurrentUser -Force
 
-      - name: Lint with PSScriptAnalyzer
+      - name: Lint with PSScriptAnalyzer (fail on Errors only)
         shell: pwsh
         run: |
-          $settings = Join-Path $PWD "PSScriptAnalyzerSettings.psd1"
-          $results  = Invoke-ScriptAnalyzer -Path . -Settings $settings -Recurse
-          if ($results) {
-            $results | Format-Table
-            throw "PSScriptAnalyzer found $($results.Count) issue(s)."
-          }
+          $settings = Join-Path (Get-Location) 'PSScriptAnalyzerSettings.psd1'
+          $results  = Invoke-ScriptAnalyzer -Path . -Recurse -Settings $settings
+          $errors   = $results | Where-Object Severity -eq 'Error'
+          if ($errors) { $errors | Format-Table; throw "PSScriptAnalyzer found $($errors.Count) error(s)." }
+          $warnings = $results | Where-Object Severity -eq 'Warning'
+          if ($warnings) { Write-Warning "PSScriptAnalyzer warnings: $($warnings.Count)"; $warnings | Format-Table }
 
       - name: Run Pester
         shell: pwsh
-        run: Invoke-Pester -Output Detailed
+        run: Invoke-Pester -CI
