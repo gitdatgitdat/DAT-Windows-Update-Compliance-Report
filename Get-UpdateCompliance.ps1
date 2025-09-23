@@ -51,7 +51,8 @@ param(
   [string]$Csv,
   [int]$MaxDaysSinceInstall = 14,
   [switch]$AllowPending,
-  [switch]$UsePSWindowsUpdate
+  [switch]$UsePSWindowsUpdate,
+  [string]$LogPath
 )
 
 function Get-OSInfo {
@@ -209,21 +210,18 @@ function Get-WUComplianceLocal {
 
 function Invoke-RemoteCompliance {
   param([string[]]$Targets, [pscredential]$Cred)
+  Write-Log INFO "Starting remote compliance on $($Targets.Count) target(s)"
 
   $sb = {
     param($maxDays,$allowPending,$usePSWU)
-    # Re-import the functions needed on the remote side:
     ${function:Get-OSInfo} | Out-Null
     ${function:Get-WULastSuccess} | Out-Null
     ${function:Get-WUState-FromCOM} | Out-Null
     ${function:Get-WUState-FromPSWindowsUpdate} | Out-Null
     ${function:Get-WUComplianceLocal} | Out-Null
-
-    # Bind the script-level params
     Set-Variable -Name MaxDaysSinceInstall -Value $maxDays -Scope Script
     if ($allowPending) { Set-Variable -Name AllowPending -Value $true -Scope Script }
     if ($usePSWU)      { Set-Variable -Name UsePSWindowsUpdate -Value $true -Scope Script }
-
     Get-WUComplianceLocal
   }
 
@@ -232,25 +230,65 @@ function Invoke-RemoteCompliance {
     try {
       $res = Invoke-Command -ComputerName $t -Credential $Cred -ScriptBlock $sb -ArgumentList $MaxDaysSinceInstall,$AllowPending,$UsePSWindowsUpdate -ErrorAction Stop
       $results += $res
+      Write-Log INFO  "Remote OK $($t) → Compliance=$($res.Compliance); Pending=$($res.PendingCount); Sec=$($res.PendingSecurity)"
     } catch {
+      $msg = $_.Exception.Message
+      Write-Log ERROR "RemoteError on $($t): $msg"
       $results += [pscustomobject]@{
-        ComputerName       = $t
-        Compliance         = "Unknown"
-        Reasons            = "RemoteError: $($_.Exception.Message)"
-        CollectedAt        = [datetime]::UtcNow
+        ComputerName = $t; Compliance = "Unknown"; Reasons = "RemoteError: $msg"; CollectedAt = [datetime]::UtcNow
       }
     }
   }
   $results
 }
 
+# --- logging helpers ---
+
+$script:LogFile = $null
+
+function Initialize-Logging {
+  param([string]$Path)
+  if (-not $Path) { return }
+  try {
+    if (Test-Path $Path -PathType Leaf) {
+      $file = $Path
+      $dir  = Split-Path -Parent $file
+      if ($dir -and -not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+    } else {
+      if (-not (Test-Path $Path)) { New-Item -ItemType Directory -Path $Path -Force | Out-Null }
+      $stamp = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH-mm-ssZ')
+      $file  = Join-Path $Path "UpdateCompliance_$stamp.log"
+    }
+    $script:LogFile = $file
+    "[$([datetime]::UtcNow.ToString('o'))] INFO  Logging to $file" | Out-File -FilePath $file -Encoding utf8 -Append
+  } catch {
+    Write-Warning "Failed to init logging: $($_.Exception.Message)"
+  }
+}
+
+function Write-Log {
+  param(
+    [ValidateSet('INFO','WARN','ERROR','DEBUG')][string]$Level = 'INFO',
+    [Parameter(Mandatory)][string]$Message
+  )
+  $ts = [datetime]::UtcNow.ToString('o')
+  $line = "[$ts] $Level $Message"
+  if ($script:LogFile) { $line | Out-File -FilePath $script:LogFile -Encoding utf8 -Append }
+  Write-Verbose $line
+}
+
 # -------- main --------
 
 $__isDotSourced = $MyInvocation.InvocationName -eq '.'
 if (-not $__isDotSourced) {
+
+  Initialize-Logging -Path $LogPath
+  Write-Log INFO "Run start. Params: MaxDays=$MaxDaysSinceInstall; AllowPending=$AllowPending; UsePSWU=$UsePSWindowsUpdate; Targets=$($ComputerName -join ',')"
+
   $all = @()
   if ($ComputerName) {
     if (-not $Credential) {
+      Write-Log ERROR "Missing -Credential with -ComputerName"
       Write-Error "Please supply -Credential when using -ComputerName."
       exit 1
     }
@@ -259,20 +297,25 @@ if (-not $__isDotSourced) {
     $all = @(Get-WUComplianceLocal)
   }
 
-  # Console preview
+  foreach ($r in $all) {
+    Write-Log INFO ("Summary {0} → {1}; Pending={2}; Sec={3}; LastInstall={4}" -f $r.ComputerName,$r.Compliance,$r.PendingCount,$r.PendingSecurity,$r.LastInstallSuccess)
+  }
+
   $all | Select-Object ComputerName,Compliance,Reasons,PendingCount,PendingSecurity,LastInstallSuccess,DaysSinceInstall,Build |
     Sort-Object ComputerName |
     Format-Table -AutoSize
 
-  # Outputs
   if ($Json) {
     $all | ConvertTo-Json -Depth 6 | Out-File -Encoding utf8 $Json
-    Write-Host "[OK] Wrote JSON -> $Json"
+    Write-Log INFO "Wrote JSON -> $Json"
   }
   if ($Csv) {
     $all |
       Select-Object ComputerName,Compliance,Reasons,PendingCount,PendingSecurity,LastDetectSuccess,LastInstallSuccess,DaysSinceInstall,ProductName,Edition,DisplayVersion,Build,CollectedAt |
       Export-Csv -NoTypeInformation -Encoding UTF8 $Csv
-    Write-Host "[OK] Wrote CSV  -> $Csv"
+    Write-Log INFO "Wrote CSV -> $Csv"
   }
+
+  Write-Log INFO "Run complete. Hosts=$($all.Count)"
 }
+
