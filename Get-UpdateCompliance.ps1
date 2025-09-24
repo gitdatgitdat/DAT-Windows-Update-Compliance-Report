@@ -52,7 +52,8 @@ param(
   [int]$MaxDaysSinceInstall = 14,
   [switch]$AllowPending,
   [switch]$UsePSWindowsUpdate,
-  [string]$LogPath
+  [string]$LogPath,
+  [string]$HostsCsv  
 )
 
 function Get-OSInfo {
@@ -228,17 +229,21 @@ function Invoke-RemoteCompliance {
   $results = @()
   foreach ($t in $Targets) {
     try {
-      $res = Invoke-Command -ComputerName $t -Credential $Cred -ScriptBlock $sb -ArgumentList $MaxDaysSinceInstall,$AllowPending,$UsePSWindowsUpdate -ErrorAction Stop
+      if ($Cred) {
+        $res = Invoke-Command -ComputerName $t -Credential $Cred `
+          -ScriptBlock $sb -ArgumentList $MaxDaysSinceInstall,$AllowPending,$UsePSWindowsUpdate -ErrorAction Stop
+      } else {
+        $res = Invoke-Command -ComputerName $t `
+          -ScriptBlock $sb -ArgumentList $MaxDaysSinceInstall,$AllowPending,$UsePSWindowsUpdate -ErrorAction Stop
+      }
       $results += $res
       Write-Log INFO  "Remote OK $($t) → Compliance=$($res.Compliance); Pending=$($res.PendingCount); Sec=$($res.PendingSecurity)"
     } catch {
       $msg = $_.Exception.Message
       Write-Log ERROR "RemoteError on $($t): $msg"
-      $results += [pscustomobject]@{
-        ComputerName = $t; Compliance = "Unknown"; Reasons = "RemoteError: $msg"; CollectedAt = [datetime]::UtcNow
+      $results += [pscustomobject]@{ ComputerName=$t; Compliance='Unknown'; Reasons="RemoteError: $msg"; CollectedAt=[datetime]::UtcNow }
       }
     }
-  }
   $results
 }
 
@@ -277,22 +282,61 @@ function Write-Log {
   Write-Verbose $line
 }
 
+function Get-TargetsFromCsv {
+  param([Parameter(Mandatory)][string]$Path)
+
+  if (-not (Test-Path $Path)) { throw "Hosts list not found: $Path" }
+
+  $ext = ([IO.Path]::GetExtension($Path) ?? '').ToLowerInvariant()
+  if ($ext -eq '.txt') {
+    return (Get-Content -Path $Path | Where-Object { $_ -and $_ -notmatch '^\s*#' } |
+            ForEach-Object { $_.Trim() } | Where-Object { $_ } | Sort-Object -Unique)
+  }
+
+  $rows = Import-Csv -Path $Path
+  if (-not $rows) { return @() }
+
+  $preferred = @('ComputerName','Hostname','Host','Name','FQDN')
+  $props     = ($rows | Get-Member -MemberType NoteProperty | Select-Object -Expand Name) | Sort-Object -Unique
+  $col       = ($preferred | Where-Object { $_ -in $props } | Select-Object -First 1)
+  if (-not $col) { $col = $props | Select-Object -First 1 }
+
+  $targets = foreach ($r in $rows) {
+    $v = $r.$col
+    if ($v -and -not [string]::IsNullOrWhiteSpace($v)) { $v.Trim() }
+  }
+  $targets | Sort-Object -Unique
+}
+
+
 # -------- main --------
 
 $__isDotSourced = $MyInvocation.InvocationName -eq '.'
 if (-not $__isDotSourced) {
 
   Initialize-Logging -Path $LogPath
-  Write-Log INFO "Run start. Params: MaxDays=$MaxDaysSinceInstall; AllowPending=$AllowPending; UsePSWU=$UsePSWindowsUpdate; Targets=$($ComputerName -join ',')"
+  Write-Log INFO "Run start. Params: MaxDays=$MaxDaysSinceInstall; AllowPending=$AllowPending; UsePSWU=$UsePSWindowsUpdate"
+
+  # Build target list
+  $targets = @()
+  if ($HostsCsv) {
+    try {
+      $fromFile = Get-TargetsFromCsv -Path $HostsCsv
+      Write-Log INFO "Loaded $($fromFile.Count) host(s) from $([IO.Path]::GetFileName($HostsCsv))"
+      $targets += $fromFile
+    } catch {
+      Write-Log ERROR "Failed reading HostsCsv: $($_.Exception.Message)"
+      throw
+    }
+  }
+  if ($ComputerName) { $targets += $ComputerName }
+  $targets = $targets | Sort-Object -Unique
 
   $all = @()
-  if ($ComputerName) {
-    if (-not $Credential) {
-      Write-Log ERROR "Missing -Credential with -ComputerName"
-      Write-Error "Please supply -Credential when using -ComputerName."
-      exit 1
-    }
-    $all = Invoke-RemoteCompliance -Targets $ComputerName -Cred $Credential
+  if ($targets.Count -gt 0) {
+    if (-not $Credential) { Write-Log INFO "No -Credential provided; attempting implicit auth." }
+    Write-Log INFO "Targets: $($targets -join ', ')"
+    $all = Invoke-RemoteCompliance -Targets $targets -Cred $Credential
   } else {
     $all = @(Get-WUComplianceLocal)
   }
@@ -302,20 +346,19 @@ if (-not $__isDotSourced) {
   }
 
   $all | Select-Object ComputerName,Compliance,Reasons,PendingCount,PendingSecurity,LastInstallSuccess,DaysSinceInstall,Build |
-    Sort-Object ComputerName |
-    Format-Table -AutoSize
+    Sort-Object ComputerName | Format-Table -AutoSize
 
   if ($Json) {
     $all | ConvertTo-Json -Depth 6 | Out-File -Encoding utf8 $Json
     Write-Log INFO "Wrote JSON -> $Json"
   }
   if ($Csv) {
-    $all |
-      Select-Object ComputerName,Compliance,Reasons,PendingCount,PendingSecurity,LastDetectSuccess,LastInstallSuccess,DaysSinceInstall,ProductName,Edition,DisplayVersion,Build,CollectedAt |
+    $all | Select-Object ComputerName,Compliance,Reasons,PendingCount,PendingSecurity,LastDetectSuccess,LastInstallSuccess,DaysSinceInstall,ProductName,Edition,DisplayVersion,Build,CollectedAt |
       Export-Csv -NoTypeInformation -Encoding UTF8 $Csv
     Write-Log INFO "Wrote CSV -> $Csv"
   }
 
   Write-Log INFO "Run complete. Hosts=$($all.Count)"
 }
+
 
