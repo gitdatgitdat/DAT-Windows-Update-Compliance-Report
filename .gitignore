@@ -4,3 +4,7 @@
 logs/
 .vscode/
 .venv/
+
+# generated reports
+reports/
+!reports/.gitkeep
