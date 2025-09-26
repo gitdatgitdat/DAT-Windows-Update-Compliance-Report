@@ -1,0 +1,18 @@
+name: release
+on:
+  push:
+    tags: [ 'v*' ]
+jobs:
+  pack:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory dist | Out-Null
+          Copy-Item Get-UpdateCompliance.ps1,New-UpdateComplianceHtml.ps1,PSScriptAnalyzerSettings.psd1 -Destination dist
+          Copy-Item -Recurse samples dist\samples
+          Compress-Archive -Path dist\* -DestinationPath update-compliance.zip
+      - uses: softprops/action-gh-release@v2
+        with: { files: update-compliance.zip }
