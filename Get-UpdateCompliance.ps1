@@ -228,6 +228,13 @@ function Invoke-RemoteCompliance {
 
   $results = @()
   foreach ($t in $Targets) {
+    if ($t -ieq $env:COMPUTERNAME -or $t -ieq "$env:COMPUTERNAME.$env:USERDNSDOMAIN") {
+      $loc = Get-WUComplianceLocal
+      $loc.ComputerName = $t  # (optional) keep the input name
+      $results += $loc
+      Write-Log INFO "Local host shortcut for $($t)"
+      continue
+    }
     try {
       if ($Cred) {
         $res = Invoke-Command -ComputerName $t -Credential $Cred `
@@ -357,6 +364,12 @@ if (-not $__isDotSourced) {
       Export-Csv -NoTypeInformation -Encoding UTF8 $Csv
     Write-Log INFO "Wrote CSV -> $Csv"
   }
+
+  $anyErr = $all | Where-Object { $_.Compliance -eq 'Unknown' }
+  $anyBad = $all | Where-Object { $_.Compliance -eq 'NonCompliant' }
+  if     ($anyErr) { exit 2 }
+  elseif ($anyBad) { exit 1 }
+  else             { exit 0 }
 
   Write-Log INFO "Run complete. Hosts=$($all.Count)"
 }
